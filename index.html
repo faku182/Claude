@@ -21,6 +21,7 @@
     --hn:#ff6a00; --dev:#5865f2; --reddit:#ff4500;
     --tc:#16a34a; --verge:#a23df5; --aa:#0ea5b7;
     --xataka:#e11d48; --genbeta:#0284c7; --hiper:#ca8a04;
+    --infocampo:#4d7c0f; --bichos:#b45309; --ipro:#0369a1; --ambito:#be123c;
     --shadow:0 1px 2px rgba(20,22,28,.06), 0 8px 24px -16px rgba(20,22,28,.18);
     --sans:"IBM Plex Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -274,6 +275,11 @@
         <button class="chip" data-src="xataka" aria-pressed="false"><span class="dot" style="background:var(--xataka)"></span>Xataka</button>
         <button class="chip" data-src="genbeta" aria-pressed="false"><span class="dot" style="background:var(--genbeta)"></span>Genbeta</button>
         <button class="chip" data-src="hiper" aria-pressed="false"><span class="dot" style="background:var(--hiper)"></span>Hipertextual</button>
+        <span class="chipsep" title="Agro e impuestos (Argentina)">AGRO · IMPUESTOS</span>
+        <button class="chip" data-src="infocampo" aria-pressed="false"><span class="dot" style="background:var(--infocampo)"></span>Infocampo</button>
+        <button class="chip" data-src="bichos" aria-pressed="false"><span class="dot" style="background:var(--bichos)"></span>Bichos de Campo</button>
+        <button class="chip" data-src="ipro" aria-pressed="false"><span class="dot" style="background:var(--ipro)"></span>iProfesional</button>
+        <button class="chip" data-src="ambito" aria-pressed="false"><span class="dot" style="background:var(--ambito)"></span>Ámbito</button>
       </div>
       <span class="spacer"></span>
       <div class="sortsel" id="sort" role="group" aria-label="Ordenar">
@@ -317,7 +323,12 @@
   <a href="https://www.androidauthority.com" target="_blank" rel="noopener">Android Authority</a>,
   <a href="https://www.xataka.com" target="_blank" rel="noopener">Xataka</a>,
   <a href="https://www.genbeta.com" target="_blank" rel="noopener">Genbeta</a> e
-  <a href="https://hipertextual.com" target="_blank" rel="noopener">Hipertextual</a>.
+  <a href="https://hipertextual.com" target="_blank" rel="noopener">Hipertextual</a>;
+  y prensa argentina de agro e impuestos:
+  <a href="https://www.infocampo.com.ar" target="_blank" rel="noopener">Infocampo</a>,
+  <a href="https://bichosdecampo.com" target="_blank" rel="noopener">Bichos de Campo</a>,
+  <a href="https://www.iprofesional.com" target="_blank" rel="noopener">iProfesional</a> y
+  <a href="https://www.ambito.com" target="_blank" rel="noopener">Ámbito</a>.
   Las noticias se cargan en vivo cada vez que abrís la página — guardá este archivo y abrilo cuando quieras para ver lo del día.
   Los medios (RSS) se traen mediante un proxy público de código abierto; si alguno no responde, el resto sigue funcionando.
 </footer>
@@ -335,11 +346,15 @@
     aa:     { label:"Android Authority", color:"var(--aa)" },
     xataka: { label:"Xataka",            color:"var(--xataka)" },
     genbeta:{ label:"Genbeta",           color:"var(--genbeta)" },
-    hiper:  { label:"Hipertextual",      color:"var(--hiper)" }
+    hiper:  { label:"Hipertextual",      color:"var(--hiper)" },
+    infocampo:{ label:"Infocampo",       color:"var(--infocampo)" },
+    bichos: { label:"Bichos de Campo",   color:"var(--bichos)" },
+    ipro:   { label:"iProfesional",      color:"var(--ipro)" },
+    ambito: { label:"Ámbito",            color:"var(--ambito)" }
   };
 
   // Fuentes que ya están en español: no se traducen.
-  var ES = { xataka:1, genbeta:1, hiper:1 };
+  var ES = { xataka:1, genbeta:1, hiper:1, infocampo:1, bichos:1, ipro:1, ambito:1 };
 
   var state = { items:[], filter:"all", sort:"top", q:"", errors:{}, translate:false };
   var renderToken = 0;
@@ -648,7 +663,11 @@
       {k:"aa",fn:function(){ return fetchRSS("https://www.androidauthority.com/feed/","aa",15,2); }},
       {k:"xataka",fn:function(){ return fetchRSS("https://feeds.weblogssl.com/xataka2","xataka",15,0); }},
       {k:"genbeta",fn:function(){ return fetchRSS("https://feeds.weblogssl.com/genbeta","genbeta",15,1); }},
-      {k:"hiper",fn:function(){ return fetchRSS("https://hipertextual.com/feed","hiper",15,2); }}
+      {k:"hiper",fn:function(){ return fetchRSS("https://hipertextual.com/feed","hiper",15,2); }},
+      {k:"infocampo",fn:function(){ return fetchRSS("https://www.infocampo.com.ar/feed/","infocampo",15,0); }},
+      {k:"bichos",fn:function(){ return fetchRSS("https://bichosdecampo.com/feed/","bichos",15,1); }},
+      {k:"ipro",fn:function(){ return fetchRSS("https://www.iprofesional.com/rss","ipro",15,2); }},
+      {k:"ambito",fn:function(){ return fetchRSS("https://www.ambito.com/rss/economia.xml","ambito",15,0); }}
     ];
     var jobs=defs.map(function(j){
       return function(){

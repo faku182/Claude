@@ -115,6 +115,10 @@ const SOURCES = [
   ["xataka", () => getText("https://feeds.weblogssl.com/xataka2").then((x) => parseFeed(x, "xataka", 15))],
   ["genbeta", () => getText("https://feeds.weblogssl.com/genbeta").then((x) => parseFeed(x, "genbeta", 15))],
   ["hiper", () => getText("https://hipertextual.com/feed").then((x) => parseFeed(x, "hiper", 15))],
+  ["infocampo", () => getText("https://www.infocampo.com.ar/feed/").then((x) => parseFeed(x, "infocampo", 15))],
+  ["bichos", () => getText("https://bichosdecampo.com/feed/").then((x) => parseFeed(x, "bichos", 15))],
+  ["ipro", () => getText("https://www.iprofesional.com/rss").then((x) => parseFeed(x, "ipro", 15))],
+  ["ambito", () => getText("https://www.ambito.com/rss/economia.xml").then((x) => parseFeed(x, "ambito", 15))],
 ];
 
 const items = [];
