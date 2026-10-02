@@ -16,14 +16,14 @@ async function getText(url) {
 }
 
 function decode(s) {
-  return String(s || "")
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n))
-    .replace(/&#x([0-9a-fA-F]+);/g, (m, n) => String.fromCharCode(parseInt(n, 16)))
-    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ").trim();
+  let t = String(s || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+  t = t.replace(/<[^>]+>/g, " "); // quita etiquetas reales
+  t = t.replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n))
+       .replace(/&#x([0-9a-fA-F]+);/g, (m, n) => String.fromCharCode(parseInt(n, 16)))
+       .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+       .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, " ");
+  t = t.replace(/<[^>]+>/g, " "); // quita etiquetas que aparecieron al decodificar (p. ej. Reddit)
+  return t.replace(/\s+/g, " ").trim();
 }
 function clip(t, n) {
   t = t || "";

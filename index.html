@@ -376,7 +376,7 @@
   function stripHtml(h){
     var ta=document.createElement("textarea");
     ta.innerHTML=String(h||"").replace(/<[^>]+>/g," ");
-    return ta.value.replace(/\s+/g," ").trim();
+    return ta.value.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
   }
   function clip(t,n){ t=t||""; return t.length>n ? t.slice(0,n-1).replace(/\s\S*$/,"").trim()+"…" : t; }
   // Ejecuta tareas (funciones que devuelven promesa) con concurrencia limitada.
