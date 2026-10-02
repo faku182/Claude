@@ -2,7 +2,7 @@ name: Actualizar noticias
 
 on:
   schedule:
-    - cron: "17 */2 * * *"   # cada 2 horas
+    - cron: "17 * * * *"   # cada 1 hora
   workflow_dispatch: {}        # permite correrlo a mano
   push:
     branches: [claude/daily-tech-news-html-dgcwpk]
