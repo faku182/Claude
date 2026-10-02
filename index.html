@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Radar Tech — Noticias de tecnología</title>
+<title>Microdosis Tech</title>
 <meta name="description" content="Recopilación diaria de noticias del mundo de la tecnología, en vivo desde Hacker News, Dev.to y Reddit.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -214,7 +214,7 @@
         </svg>
       </span>
       <div class="brand-text">
-        <h1>Radar Tech</h1>
+        <h1>Microdosis Tech</h1>
         <div class="tagline" id="dateline">Noticias de tecnología</div>
       </div>
       <span class="spacer"></span>
@@ -248,6 +248,10 @@
         <button data-sort="new" aria-pressed="true">Recientes</button>
         <button data-sort="top" aria-pressed="false">Más votadas</button>
       </div>
+      <button class="chip tgl" id="translate" aria-pressed="false" title="Traducir al español los títulos en inglés">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"/></svg>
+        Traducir al español
+      </button>
       <label class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <input id="q" type="search" placeholder="Filtrar por palabra…" autocomplete="off" aria-label="Filtrar noticias">
@@ -271,7 +275,7 @@
 </main>
 
 <footer class="wrap">
-  Radar Tech recopila automáticamente lo más destacado del día desde
+  Microdosis Tech recopila automáticamente lo más destacado del día desde
   <a href="https://news.ycombinator.com" target="_blank" rel="noopener">Hacker News</a>,
   <a href="https://dev.to" target="_blank" rel="noopener">Dev.to</a>,
   <a href="https://www.reddit.com/r/technology/" target="_blank" rel="noopener">Reddit r/technology</a>,
@@ -301,7 +305,11 @@
     hiper:  { label:"Hipertextual",      color:"var(--hiper)" }
   };
 
-  var state = { items:[], filter:"all", sort:"top", q:"", errors:{} };
+  // Fuentes que ya están en español: no se traducen.
+  var ES = { xataka:1, genbeta:1, hiper:1 };
+
+  var state = { items:[], filter:"all", sort:"top", q:"", errors:{}, translate:false };
+  var renderToken = 0;
 
   var $ = function(s){ return document.querySelector(s); };
   var feedEl = $("#feed"), emptyEl = $("#empty"), errEl = $("#errors");
@@ -358,6 +366,58 @@
     }
     return attempt();
   }
+  /* ---------- traducción EN→ES ---------- */
+  // Caché persistente de títulos traducidos (clave: título original).
+  var TC = (function(){ try{ return JSON.parse(localStorage.getItem("mt-tcache")||"{}"); }catch(e){ return {}; } })();
+  function cacheGet(k){ return TC[k]; }
+  function cacheSet(k,v){
+    TC[k]=v;
+    try{
+      var ks=Object.keys(TC);
+      if(ks.length>800){ for(var j=0;j<ks.length-600;j++) delete TC[ks[j]]; }
+      localStorage.setItem("mt-tcache", JSON.stringify(TC));
+    }catch(e){}
+  }
+  function gtxUrl(t){
+    return "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q="+encodeURIComponent(t);
+  }
+  function parseGtx(data){
+    if(!data || !data[0]) return null;
+    return data[0].map(function(s){ return (s && s[0]) ? s[0] : ""; }).join("");
+  }
+  // Traduce un texto. Prueba directo y, si CORS lo bloquea, vía proxy.
+  function translateText(t){
+    var url=gtxUrl(t);
+    return timeout(fetch(url).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }), 12000)
+      .catch(function(){ return getText(url).then(function(txt){ return JSON.parse(txt); }); })
+      .then(function(data){ return parseGtx(data) || t; });
+  }
+  // Traduce un lote con concurrencia limitada; actualiza la tarjeta en vivo.
+  function translatePool(items, token){
+    var i=0, active=0, max=4;
+    return new Promise(function(resolve){
+      function next(){
+        if(token!==renderToken){ resolve(); return; }
+        if(i>=items.length && active===0){ resolve(); return; }
+        while(active<max && i<items.length){
+          (function(it){
+            active++;
+            translateText(it.title).then(function(es){
+              it.titleEs=es||it.title; cacheSet(it.title, it.titleEs);
+            }).catch(function(){ it.titleEs=it.title; }).then(function(){
+              if(token===renderToken && it._el && state.translate){
+                it._el.textContent=it.titleEs;
+                it._el.setAttribute("title", it.title);
+              }
+              active--; next();
+            });
+          })(items[i++]);
+        }
+      }
+      next();
+    });
+  }
+
   function authorOf(n){
     var dc=n.getElementsByTagName("dc:creator")[0];
     if(dc && dc.textContent) return dc.textContent.trim();
@@ -534,8 +594,18 @@
     }
     emptyEl.hidden=true;
 
+    // Si la traducción está activa, precargar lo que ya esté en caché.
+    if(state.translate){
+      list.forEach(function(it){
+        if(!ES[it.source] && !it.titleEs){ var c=cacheGet(it.title); if(c) it.titleEs=c; }
+      });
+    }
+
     var html=list.map(function(it,i){
       var s=SRC[it.source], dom=domainOf(it.url);
+      var isEn=!ES[it.source];
+      var showEs=state.translate && isEn && it.titleEs;
+      var disp=showEs ? it.titleEs : it.title;
       var meta=[];
       if(it.points!=null) meta.push('<span class="m" title="Puntos">'+icon("up")+fmtNum(it.points)+'</span>');
       if(it.comments!=null) meta.push('<a class="m" href="'+esc(it.commentsUrl)+'" target="_blank" rel="noopener" title="Comentarios">'+icon("chat")+fmtNum(it.comments)+'</a>');
@@ -548,15 +618,34 @@
             '<span class="srctag" style="background:'+s.color+'">'+esc(s.label)+'</span>'+
             (dom?'<span class="domain">'+esc(dom)+'</span>':'')+
           '</div>'+
-          '<h2 class="title"><a href="'+esc(it.url)+'" target="_blank" rel="noopener">'+esc(it.title)+'</a></h2>'+
+          '<h2 class="title"><a href="'+esc(it.url)+'" target="_blank" rel="noopener"'+(showEs?' title="'+esc(it.title)+'"':'')+'>'+esc(disp)+'</a></h2>'+
           '<div class="meta">'+meta.join("")+'</div>'+
         '</div>'+
       '</li>';
     }).join("");
     feedEl.innerHTML=html;
 
-    var srcCount={}; state.items.forEach(function(x){ srcCount[x.source]=1; });
-    $("#count").textContent = list.length+" noticias · "+Object.keys(srcCount).length+" fuentes";
+    // Vincular cada tarjeta con su elemento para poder actualizar el título traducido.
+    var token=++renderToken;
+    var links=feedEl.querySelectorAll("h2.title a");
+    list.forEach(function(it,idx){ it._el=links[idx]; });
+
+    if(state.translate){
+      var pend=list.filter(function(it){ return !ES[it.source] && !it.titleEs; });
+      if(pend.length){
+        $("#count").textContent=countText(list)+" · traduciendo…";
+        translatePool(pend, token).then(function(){
+          if(token===renderToken) $("#count").textContent=countText(list);
+        });
+        return;
+      }
+    }
+    $("#count").textContent=countText(list);
+  }
+
+  function countText(list){
+    var sc={}; state.items.forEach(function(x){ sc[x.source]=1; });
+    return list.length+" noticias · "+Object.keys(sc).length+" fuentes";
   }
 
   /* ---------- fecha cabecera ---------- */
@@ -590,6 +679,7 @@
   /* ---------- controles ---------- */
   state.filter = store("rt-filter") || "all";
   state.sort   = store("rt-sort") || "new";
+  state.translate = store("mt-translate") === "1";
 
   Array.prototype.forEach.call(document.querySelectorAll("#chips .chip"), function(b){
     b.setAttribute("aria-pressed", b.dataset.src===state.filter ? "true":"false");
@@ -610,6 +700,15 @@
       });
       render();
     });
+  });
+
+  var tbtn=$("#translate");
+  tbtn.setAttribute("aria-pressed", state.translate ? "true":"false");
+  tbtn.addEventListener("click", function(){
+    state.translate=!state.translate;
+    store("mt-translate", state.translate?"1":"");
+    tbtn.setAttribute("aria-pressed", state.translate?"true":"false");
+    render();
   });
 
   var qt;
