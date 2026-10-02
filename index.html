@@ -20,6 +20,7 @@
     --accent-ink:#2143d6;
     --hn:#ff6a00; --dev:#5865f2; --reddit:#ff4500;
     --tc:#16a34a; --verge:#a23df5; --aa:#0ea5b7;
+    --xataka:#e11d48; --genbeta:#0284c7; --hiper:#ca8a04;
     --shadow:0 1px 2px rgba(20,22,28,.06), 0 8px 24px -16px rgba(20,22,28,.18);
     --sans:"IBM Plex Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -104,6 +105,11 @@
     background:var(--fg); color:var(--bg); border-color:var(--fg);
   }
   .chip .dot{width:7px; height:7px; border-radius:50%; flex:none}
+  .chipsep{
+    font-family:var(--mono); font-size:.6rem; font-weight:600; letter-spacing:.1em;
+    color:var(--muted); align-self:center; padding-left:6px; border-left:1px solid var(--border);
+    margin-left:2px; opacity:.8;
+  }
 
   .search{
     position:relative; flex:1 1 180px; min-width:150px; max-width:320px;
@@ -232,6 +238,10 @@
         <button class="chip" data-src="tc" aria-pressed="false"><span class="dot" style="background:var(--tc)"></span>TechCrunch</button>
         <button class="chip" data-src="verge" aria-pressed="false"><span class="dot" style="background:var(--verge)"></span>The Verge</button>
         <button class="chip" data-src="aa" aria-pressed="false"><span class="dot" style="background:var(--aa)"></span>Android Authority</button>
+        <span class="chipsep" title="Medios en español">ES</span>
+        <button class="chip" data-src="xataka" aria-pressed="false"><span class="dot" style="background:var(--xataka)"></span>Xataka</button>
+        <button class="chip" data-src="genbeta" aria-pressed="false"><span class="dot" style="background:var(--genbeta)"></span>Genbeta</button>
+        <button class="chip" data-src="hiper" aria-pressed="false"><span class="dot" style="background:var(--hiper)"></span>Hipertextual</button>
       </div>
       <span class="spacer"></span>
       <div class="sortsel" id="sort" role="group" aria-label="Ordenar">
@@ -266,8 +276,11 @@
   <a href="https://dev.to" target="_blank" rel="noopener">Dev.to</a>,
   <a href="https://www.reddit.com/r/technology/" target="_blank" rel="noopener">Reddit r/technology</a>,
   <a href="https://techcrunch.com" target="_blank" rel="noopener">TechCrunch</a>,
-  <a href="https://www.theverge.com" target="_blank" rel="noopener">The Verge</a> y
-  <a href="https://www.androidauthority.com" target="_blank" rel="noopener">Android Authority</a>.
+  <a href="https://www.theverge.com" target="_blank" rel="noopener">The Verge</a>,
+  <a href="https://www.androidauthority.com" target="_blank" rel="noopener">Android Authority</a>,
+  <a href="https://www.xataka.com" target="_blank" rel="noopener">Xataka</a>,
+  <a href="https://www.genbeta.com" target="_blank" rel="noopener">Genbeta</a> e
+  <a href="https://hipertextual.com" target="_blank" rel="noopener">Hipertextual</a>.
   Las noticias se cargan en vivo cada vez que abrís la página — guardá este archivo y abrilo cuando quieras para ver lo del día.
   Los medios (RSS) se traen mediante un proxy público de código abierto; si alguno no responde, el resto sigue funcionando.
 </footer>
@@ -282,7 +295,10 @@
     reddit: { label:"Reddit",            color:"var(--reddit)" },
     tc:     { label:"TechCrunch",        color:"var(--tc)" },
     verge:  { label:"The Verge",         color:"var(--verge)" },
-    aa:     { label:"Android Authority", color:"var(--aa)" }
+    aa:     { label:"Android Authority", color:"var(--aa)" },
+    xataka: { label:"Xataka",            color:"var(--xataka)" },
+    genbeta:{ label:"Genbeta",           color:"var(--genbeta)" },
+    hiper:  { label:"Hipertextual",      color:"var(--hiper)" }
   };
 
   var state = { items:[], filter:"all", sort:"top", q:"", errors:{} };
@@ -440,7 +456,10 @@
       {k:"reddit",fn:fetchReddit},
       {k:"tc",fn:function(){ return fetchRSS("https://techcrunch.com/feed/","tc",15); }},
       {k:"verge",fn:function(){ return fetchRSS("https://www.theverge.com/rss/index.xml","verge",15); }},
-      {k:"aa",fn:function(){ return fetchRSS("https://www.androidauthority.com/feed/","aa",15); }}
+      {k:"aa",fn:function(){ return fetchRSS("https://www.androidauthority.com/feed/","aa",15); }},
+      {k:"xataka",fn:function(){ return fetchRSS("https://feeds.weblogssl.com/xataka2","xataka",15); }},
+      {k:"genbeta",fn:function(){ return fetchRSS("https://feeds.weblogssl.com/genbeta","genbeta",15); }},
+      {k:"hiper",fn:function(){ return fetchRSS("https://hipertextual.com/feed","hiper",15); }}
     ].map(function(j){
       return j.fn().then(function(items){ return {k:j.k, items:items}; })
                    .catch(function(e){ state.errors[j.k]=e.message||"error"; return {k:j.k, items:[]}; });
