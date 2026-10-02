@@ -117,7 +117,7 @@ const SOURCES = [
   ["hiper", () => getText("https://hipertextual.com/feed").then((x) => parseFeed(x, "hiper", 15))],
   ["infocampo", () => getText("https://www.infocampo.com.ar/feed/").then((x) => parseFeed(x, "infocampo", 15))],
   ["bichos", () => getText("https://bichosdecampo.com/feed/").then((x) => parseFeed(x, "bichos", 15))],
-  ["ipro", () => getText("https://www.iprofesional.com/rss").then((x) => parseFeed(x, "ipro", 15))],
+  ["ipro", () => getText("https://www.iprofesional.com/rss/impuestos").then((x) => parseFeed(x, "ipro", 15))],
   ["ambito", () => getText("https://www.ambito.com/rss/economia.xml").then((x) => parseFeed(x, "ambito", 15))],
 ];
 
