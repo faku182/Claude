@@ -163,6 +163,10 @@
   h2.title{font-size:1.06rem; font-weight:600; line-height:1.32; margin:0; letter-spacing:-.01em; text-wrap:balance}
   h2.title a{text-decoration:none}
   h2.title a:hover{color:var(--accent-ink); text-decoration:underline; text-underline-offset:2px}
+  .summary{
+    margin:7px 0 0; font-size:.9rem; line-height:1.45; color:var(--muted);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
   .meta{
     margin-top:7px; font-family:var(--mono); font-size:.72rem; color:var(--muted);
     display:flex; align-items:center; gap:14px; flex-wrap:wrap;
@@ -354,27 +358,54 @@
     function(u){ return "https://corsproxy.io/?url="+encodeURIComponent(u); },
     function(u){ return "https://api.codetabs.com/v1/proxy/?quest="+encodeURIComponent(u); }
   ];
-  function getText(url){
+  function getText(url, start){
+    var n=PROXIES.length, order=[]; start=start||0;
+    for(var k=0;k<n;k++) order.push(PROXIES[(start+k)%n]);
     var i=0;
     function attempt(){
-      return timeout(fetch(PROXIES[i](url)).then(function(r){
+      return timeout(fetch(order[i](url)).then(function(r){
         if(!r.ok) throw new Error("HTTP "+r.status);
         return r.text();
       }), 14000).catch(function(e){
-        i++; if(i<PROXIES.length) return attempt(); throw e;
+        i++; if(i<order.length) return attempt(); throw e;
       });
     }
     return attempt();
   }
+  // Limpia HTML y recorta para el resumen.
+  function stripHtml(h){
+    var ta=document.createElement("textarea");
+    ta.innerHTML=String(h||"").replace(/<[^>]+>/g," ");
+    return ta.value.replace(/\s+/g," ").trim();
+  }
+  function clip(t,n){ t=t||""; return t.length>n ? t.slice(0,n-1).replace(/\s\S*$/,"").trim()+"…" : t; }
+  // Ejecuta tareas (funciones que devuelven promesa) con concurrencia limitada.
+  function runPool(jobs, max){
+    return new Promise(function(resolve){
+      var i=0, active=0, res=[];
+      function next(){
+        if(i>=jobs.length && active===0){ resolve(res); return; }
+        while(active<max && i<jobs.length){
+          (function(idx){
+            active++;
+            Promise.resolve().then(jobs[idx]).then(function(v){ res[idx]=v; })
+              .catch(function(e){ res[idx]={error:e}; })
+              .then(function(){ active--; next(); });
+          })(i++);
+        }
+      }
+      next();
+    });
+  }
   /* ---------- traducción EN→ES ---------- */
   // Caché persistente de títulos traducidos (clave: título original).
   var TC = (function(){ try{ return JSON.parse(localStorage.getItem("mt-tcache")||"{}"); }catch(e){ return {}; } })();
-  function cacheGet(k){ return TC[k]; }
+  function cacheGet(k){ return TC["t:"+k]; }
   function cacheSet(k,v){
-    TC[k]=v;
+    TC["t:"+k]=v;
     try{
       var ks=Object.keys(TC);
-      if(ks.length>800){ for(var j=0;j<ks.length-600;j++) delete TC[ks[j]]; }
+      if(ks.length>1200){ for(var j=0;j<ks.length-900;j++) delete TC[ks[j]]; }
       localStorage.setItem("mt-tcache", JSON.stringify(TC));
     }catch(e){}
   }
@@ -392,6 +423,19 @@
       .catch(function(){ return getText(url).then(function(txt){ return JSON.parse(txt); }); })
       .then(function(data){ return parseGtx(data) || t; });
   }
+  // Traduce título y resumen de un ítem (lo que falte).
+  function translateItem(it){
+    var jobs=[];
+    if(!it.titleEs){
+      jobs.push(translateText(it.title).then(function(x){ it.titleEs=x||it.title; cacheSet(it.title, it.titleEs); })
+                 .catch(function(){ it.titleEs=it.title; }));
+    }
+    if(it.summary && !it.summaryEs){
+      jobs.push(translateText(it.summary).then(function(x){ it.summaryEs=x||it.summary; cacheSet(it.summary, it.summaryEs); })
+                 .catch(function(){ it.summaryEs=it.summary; }));
+    }
+    return Promise.all(jobs);
+  }
   // Traduce un lote con concurrencia limitada; actualiza la tarjeta en vivo.
   function translatePool(items, token){
     var i=0, active=0, max=4;
@@ -402,15 +446,12 @@
         while(active<max && i<items.length){
           (function(it){
             active++;
-            translateText(it.title).then(function(es){
-              it.titleEs=es||it.title; cacheSet(it.title, it.titleEs);
-            }).catch(function(){ it.titleEs=it.title; }).then(function(){
-              if(token===renderToken && it._el && state.translate){
-                it._el.textContent=it.titleEs;
-                it._el.setAttribute("title", it.title);
+            translateItem(it).then(function(){
+              if(token===renderToken && state.translate){
+                if(it._el && it.titleEs){ it._el.textContent=it.titleEs; it._el.setAttribute("title", it.title); }
+                if(it._sel && it.summaryEs){ it._sel.textContent=it.summaryEs; }
               }
-              active--; next();
-            });
+            }).then(function(){ active--; next(); });
           })(items[i++]);
         }
       }
@@ -427,9 +468,24 @@
     if(a) return a.textContent.replace(/<[^>]+>/g,"").trim();
     return "";
   }
-  // Parser genérico RSS 2.0 / Atom
-  function fetchRSS(feedUrl, source, limit){
-    return getText(feedUrl).then(function(xml){
+  // Lee un feed RSS/Atom. Vía principal: rss2json (JSON con CORS). Respaldo: proxy + parser.
+  function fetchRSS(feedUrl, source, limit, pindex){
+    limit=limit||15;
+    return getJSON("https://api.rss2json.com/v1/api.json?count="+limit+"&rss_url="+encodeURIComponent(feedUrl))
+      .then(function(d){
+        if(!d || d.status!=="ok" || !d.items || !d.items.length) throw new Error("rss2json");
+        return d.items.slice(0,limit).map(function(it){
+          var ts=it.pubDate ? new Date(it.pubDate.replace(" ","T")).getTime() : 0;
+          return { id:source+"|"+it.link, source:source, title:(it.title||"").trim(), url:it.link,
+                   commentsUrl:it.link, points:null, comments:null, author:it.author||"",
+                   ts:isNaN(ts)?0:ts, summary:clip(stripHtml(it.description||it.content||""),220) };
+        }).filter(function(x){ return x.title && x.url; });
+      })
+      .catch(function(){ return fetchRSSraw(feedUrl, source, limit, pindex); });
+  }
+  // Respaldo: descarga el XML por proxy y lo parsea (RSS 2.0 / Atom).
+  function fetchRSSraw(feedUrl, source, limit, pindex){
+    return getText(feedUrl, pindex||0).then(function(xml){
       var doc=new DOMParser().parseFromString(xml, "text/xml");
       if(doc.querySelector("parsererror")) throw new Error("feed ilegible");
       var nodes=doc.querySelectorAll("item, entry");
@@ -446,10 +502,12 @@
         var ds=""; var de=n.querySelector("pubDate, published, updated, date");
         if(de) ds=de.textContent.trim();
         var ts=ds ? new Date(ds).getTime() : 0;
+        var dsc=n.querySelector("description, summary, encoded, content");
+        var summary=dsc ? clip(stripHtml(dsc.textContent),220) : "";
         if(title && link){
           out.push({ id:source+"|"+link, source:source, title:title, url:link,
                      commentsUrl:link, points:null, comments:null,
-                     author:authorOf(n), ts:isNaN(ts)?0:ts });
+                     author:authorOf(n), ts:isNaN(ts)?0:ts, summary:summary });
         }
       });
       return out.slice(0, limit||15);
@@ -479,7 +537,8 @@
           id:"dev"+a.id, source:"dev",
           title:a.title, url:a.url, commentsUrl:a.url+"#comments",
           points:a.positive_reactions_count||0, comments:a.comments_count||0,
-          author:(a.user&&a.user.name)||"", ts:new Date(a.published_at).getTime()
+          author:(a.user&&a.user.name)||"", ts:new Date(a.published_at).getTime(),
+          summary:clip(a.description||"",220)
         };
       }).filter(function(x){ return x.title; });
     });
@@ -487,7 +546,7 @@
   function fetchReddit(){
     return getJSON("https://www.reddit.com/r/technology/top.json?t=day&limit=40").then(function(d){
       var kids=(d&&d.data&&d.data.children)||[];
-      return kids.map(function(k){ return k.data; }).filter(function(p){ return p && !p.stickied; }).map(function(p){
+      var out=kids.map(function(k){ return k.data; }).filter(function(p){ return p && !p.stickied; }).map(function(p){
         var cu="https://www.reddit.com"+p.permalink;
         return {
           id:"rd"+p.id, source:"reddit",
@@ -495,9 +554,15 @@
           url:p.is_self ? cu : p.url,
           commentsUrl:cu,
           points:p.score||0, comments:p.num_comments||0,
-          author:p.author, ts:(p.created_utc||0)*1000
+          author:p.author, ts:(p.created_utc||0)*1000,
+          summary:clip(stripHtml(p.selftext||""),220)
         };
       }).filter(function(x){ return x.title; });
+      if(!out.length) throw new Error("reddit vacío");
+      return out;
+    }).catch(function(){
+      // Respaldo: feed RSS de Reddit (sin puntaje) vía rss2json/proxy.
+      return fetchRSS("https://www.reddit.com/r/technology/.rss?t=day","reddit",25,0);
     });
   }
 
@@ -510,22 +575,26 @@
     $("#livetext").textContent="Actualizando";
     if(!state.items.length) renderSkeletons();
 
-    var jobs=[
+    var defs=[
       {k:"hn",fn:fetchHN},
       {k:"dev",fn:fetchDev},
       {k:"reddit",fn:fetchReddit},
-      {k:"tc",fn:function(){ return fetchRSS("https://techcrunch.com/feed/","tc",15); }},
-      {k:"verge",fn:function(){ return fetchRSS("https://www.theverge.com/rss/index.xml","verge",15); }},
-      {k:"aa",fn:function(){ return fetchRSS("https://www.androidauthority.com/feed/","aa",15); }},
-      {k:"xataka",fn:function(){ return fetchRSS("https://feeds.weblogssl.com/xataka2","xataka",15); }},
-      {k:"genbeta",fn:function(){ return fetchRSS("https://feeds.weblogssl.com/genbeta","genbeta",15); }},
-      {k:"hiper",fn:function(){ return fetchRSS("https://hipertextual.com/feed","hiper",15); }}
-    ].map(function(j){
-      return j.fn().then(function(items){ return {k:j.k, items:items}; })
-                   .catch(function(e){ state.errors[j.k]=e.message||"error"; return {k:j.k, items:[]}; });
+      {k:"tc",fn:function(){ return fetchRSS("https://techcrunch.com/feed/","tc",15,0); }},
+      {k:"verge",fn:function(){ return fetchRSS("https://www.theverge.com/rss/index.xml","verge",15,1); }},
+      {k:"aa",fn:function(){ return fetchRSS("https://www.androidauthority.com/feed/","aa",15,2); }},
+      {k:"xataka",fn:function(){ return fetchRSS("https://feeds.weblogssl.com/xataka2","xataka",15,0); }},
+      {k:"genbeta",fn:function(){ return fetchRSS("https://feeds.weblogssl.com/genbeta","genbeta",15,1); }},
+      {k:"hiper",fn:function(){ return fetchRSS("https://hipertextual.com/feed","hiper",15,2); }}
+    ];
+    var jobs=defs.map(function(j){
+      return function(){
+        return j.fn().then(function(items){ return {k:j.k, items:items}; })
+                     .catch(function(e){ state.errors[j.k]=(e&&e.message)||"error"; return {k:j.k, items:[]}; });
+      };
     });
 
-    Promise.all(jobs).then(function(res){
+    // De a 3 a la vez, para no saturar los proxies.
+    runPool(jobs, 3).then(function(res){
       var all=[]; res.forEach(function(r){ all=all.concat(r.items); });
       // dedup por título normalizado
       var seen={}, out=[];
@@ -597,7 +666,9 @@
     // Si la traducción está activa, precargar lo que ya esté en caché.
     if(state.translate){
       list.forEach(function(it){
-        if(!ES[it.source] && !it.titleEs){ var c=cacheGet(it.title); if(c) it.titleEs=c; }
+        if(ES[it.source]) return;
+        if(!it.titleEs){ var c=cacheGet(it.title); if(c) it.titleEs=c; }
+        if(it.summary && !it.summaryEs){ var cs=cacheGet(it.summary); if(cs) it.summaryEs=cs; }
       });
     }
 
@@ -606,6 +677,7 @@
       var isEn=!ES[it.source];
       var showEs=state.translate && isEn && it.titleEs;
       var disp=showEs ? it.titleEs : it.title;
+      var sumShow=(state.translate && isEn && it.summaryEs) ? it.summaryEs : it.summary;
       var meta=[];
       if(it.points!=null) meta.push('<span class="m" title="Puntos">'+icon("up")+fmtNum(it.points)+'</span>');
       if(it.comments!=null) meta.push('<a class="m" href="'+esc(it.commentsUrl)+'" target="_blank" rel="noopener" title="Comentarios">'+icon("chat")+fmtNum(it.comments)+'</a>');
@@ -619,19 +691,26 @@
             (dom?'<span class="domain">'+esc(dom)+'</span>':'')+
           '</div>'+
           '<h2 class="title"><a href="'+esc(it.url)+'" target="_blank" rel="noopener"'+(showEs?' title="'+esc(it.title)+'"':'')+'>'+esc(disp)+'</a></h2>'+
+          (sumShow?'<p class="summary">'+esc(sumShow)+'</p>':'')+
           '<div class="meta">'+meta.join("")+'</div>'+
         '</div>'+
       '</li>';
     }).join("");
     feedEl.innerHTML=html;
 
-    // Vincular cada tarjeta con su elemento para poder actualizar el título traducido.
+    // Vincular cada tarjeta con sus elementos para actualizar título y resumen traducidos.
     var token=++renderToken;
-    var links=feedEl.querySelectorAll("h2.title a");
-    list.forEach(function(it,idx){ it._el=links[idx]; });
+    var cards=feedEl.querySelectorAll("li.card");
+    list.forEach(function(it,idx){
+      var c=cards[idx]; if(!c) return;
+      it._el=c.querySelector("h2.title a");
+      it._sel=c.querySelector(".summary");
+    });
 
     if(state.translate){
-      var pend=list.filter(function(it){ return !ES[it.source] && !it.titleEs; });
+      var pend=list.filter(function(it){
+        return !ES[it.source] && (!it.titleEs || (it.summary && !it.summaryEs));
+      });
       if(pend.length){
         $("#count").textContent=countText(list)+" · traduciendo…";
         translatePool(pend, token).then(function(){
