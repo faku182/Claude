@@ -568,6 +568,28 @@
 
   /* ---------- carga ---------- */
   var loading=false;
+
+  function dedup(arr){
+    var seen={}, out=[];
+    arr.forEach(function(it){
+      if(!it || !it.title) return;
+      var key=it.title.toLowerCase().replace(/[^a-z0-9áéíóúñ ]/gi,"").trim();
+      if(seen[key]) return; seen[key]=1; out.push(it);
+    });
+    return out;
+  }
+  function finishLoad(items, updatedISO){
+    state.items=dedup(items);
+    loading=false;
+    $("#refresh").classList.remove("refreshing");
+    $("#livetext").textContent="En vivo";
+    var d=updatedISO ? new Date(updatedISO) : new Date();
+    $("#updated").textContent="Actualizado "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
+    render();
+  }
+
+  // Carga principal: lee data.json (mismo sitio, lo genera GitHub cada 2 h).
+  // Si no existe o está vacío (p. ej. abriendo el archivo suelto), usa la carga en vivo.
   function load(){
     if(loading) return; loading=true;
     state.errors={};
@@ -575,6 +597,19 @@
     $("#livetext").textContent="Actualizando";
     if(!state.items.length) renderSkeletons();
 
+    timeout(fetch("data.json?_="+Date.now(), {cache:"no-store"}).then(function(r){
+      if(!r.ok) throw new Error("no data.json"); return r.json();
+    }), 10000).then(function(d){
+      if(!d || !d.items || !d.items.length) throw new Error("data.json vacío");
+      state.errors = d.errors || {};
+      finishLoad(d.items, d.updated);
+    }).catch(function(){
+      liveLoad();
+    });
+  }
+
+  // Respaldo: junta las fuentes desde el navegador (puede fallar por CORS/firewall).
+  function liveLoad(){
     var defs=[
       {k:"hn",fn:fetchHN},
       {k:"dev",fn:fetchDev},
@@ -592,23 +627,9 @@
                      .catch(function(e){ state.errors[j.k]=(e&&e.message)||"error"; return {k:j.k, items:[]}; });
       };
     });
-
-    // De a 3 a la vez, para no saturar los proxies.
     runPool(jobs, 3).then(function(res){
       var all=[]; res.forEach(function(r){ all=all.concat(r.items); });
-      // dedup por título normalizado
-      var seen={}, out=[];
-      all.forEach(function(it){
-        var key=it.title.toLowerCase().replace(/[^a-z0-9áéíóúñ ]/gi,"").trim();
-        if(seen[key]){ return; } seen[key]=1; out.push(it);
-      });
-      state.items=out;
-      loading=false;
-      $("#refresh").classList.remove("refreshing");
-      $("#livetext").textContent="En vivo";
-      var now=new Date();
-      $("#updated").textContent="Actualizado "+now.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
-      render();
+      finishLoad(all, null);
     });
   }
 
