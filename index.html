@@ -138,6 +138,34 @@
   .live .pulse{width:7px; height:7px; border-radius:50%; background:#2bbd6e; box-shadow:0 0 0 0 rgba(43,189,110,.5); animation:pulse 2s infinite}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(43,189,110,.5)}70%{box-shadow:0 0 0 7px rgba(43,189,110,0)}100%{box-shadow:0 0 0 0 rgba(43,189,110,0)}}
 
+  /* ── Panorama del día ── */
+  .resumen{
+    background:var(--surface); border:1px solid var(--border); border-radius:16px;
+    padding:18px 20px; box-shadow:var(--shadow); margin-bottom:20px;
+  }
+  .res-head{font-size:1.02rem; font-weight:700; letter-spacing:-.01em}
+  .res-stats{font-family:var(--mono); font-size:.72rem; color:var(--muted); margin-top:3px; letter-spacing:.02em}
+  .res-sec{margin-top:14px}
+  .res-label{
+    font-family:var(--mono); font-size:.64rem; font-weight:600; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--muted); margin-bottom:8px;
+  }
+  .themes{display:flex; flex-wrap:wrap; gap:7px}
+  .tchip{
+    font-family:var(--sans); font-size:.82rem; cursor:pointer;
+    border:1px solid var(--border); background:var(--bg); color:var(--fg);
+    border-radius:999px; padding:5px 11px; display:inline-flex; align-items:center; gap:6px;
+    transition:border-color .15s, background .15s;
+  }
+  .tchip:hover{border-color:color-mix(in srgb, var(--accent) 50%, var(--border))}
+  .tchip .n{font-family:var(--mono); font-size:.68rem; color:var(--accent-ink); font-weight:600}
+  ol.voted{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px}
+  ol.voted li{display:grid; grid-template-columns:auto 1fr; gap:4px 10px; align-items:baseline}
+  ol.voted .vrank{font-family:var(--mono); font-weight:700; color:var(--accent-ink); font-size:.85rem}
+  ol.voted a{font-weight:600; font-size:.95rem; line-height:1.3; text-decoration:none; grid-column:2}
+  ol.voted a:hover{color:var(--accent-ink); text-decoration:underline; text-underline-offset:2px}
+  ol.voted .vmeta{grid-column:2; font-family:var(--mono); font-size:.68rem; color:var(--muted)}
+
   /* ── Lista ── */
   main{padding-block:22px 48px}
   ol.feed{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px}
@@ -274,6 +302,7 @@
 
 <main class="wrap">
   <div id="errors"></div>
+  <section id="resumen" class="resumen" hidden aria-label="Panorama del día"></section>
   <ol class="feed" id="feed" aria-live="polite"></ol>
   <div id="empty" class="notice" hidden></div>
 </main>
@@ -665,7 +694,59 @@
     return list;
   }
 
+  // Palabras muy frecuentes que no aportan como "tema".
+  var STOP = {};
+  ("de la el los las un una unos unas y o u que con por para del al en es son se su sus lo le les como mas más pero este esta estos estas ese esa eso aqui aquí ahora hoy dia día año años sobre entre desde hasta tras cada todo toda todos todas otro otra via vía nuevo nueva nuevos nuevas puede pueden hacer hace tiene tienen ser estar sin ante bajo cabe hacia segun según sea han hay fue era muy ya no si sí "+
+   "the and for with that this from have has are was will you your they their its new now how what why who out get can not but all any one two has had why "+
+   "best top first last next after before into over under about your more most than then them there here when where which while your yours")
+    .split(/\s+/).forEach(function(w){ if(w) STOP[w]=1; });
+
+  function distinctSources(items){ var s={}; items.forEach(function(x){ s[x.source]=1; }); return Object.keys(s).length; }
+
+  function topThemes(items){
+    var freq={};
+    items.forEach(function(it){
+      var text=(it.title+" "+(it.summary||"")).toLowerCase();
+      var words=text.match(/[a-záéíóúñü]{4,}/g)||[];
+      var seen={};
+      words.forEach(function(w){
+        if(STOP[w] || seen[w]) return;
+        seen[w]=1; freq[w]=(freq[w]||0)+1;
+      });
+    });
+    return Object.keys(freq).map(function(w){ return [w, freq[w]]; })
+      .filter(function(p){ return p[1]>=3; })
+      .sort(function(a,b){ return b[1]-a[1]; })
+      .slice(0,10);
+  }
+
+  function renderSummary(){
+    var box=$("#resumen");
+    if(!state.items.length){ box.hidden=true; return; }
+    var themes=topThemes(state.items);
+    var voted=state.items.filter(function(it){ return it.points!=null; })
+                         .sort(function(a,b){ return b.points-a.points; }).slice(0,3);
+    var chips=themes.map(function(p){
+      var w=p[0];
+      return '<button class="tchip" data-term="'+esc(w)+'">'+esc(w.charAt(0).toUpperCase()+w.slice(1))+'<span class="n">'+p[1]+'</span></button>';
+    }).join("");
+    var votedHtml=voted.map(function(it,i){
+      var s=SRC[it.source];
+      var disp=(state.translate && !ES[it.source] && it.titleEs) ? it.titleEs : it.title;
+      return '<li><span class="vrank">'+(i+1)+'</span>'+
+        '<a href="'+esc(it.url)+'" target="_blank" rel="noopener">'+esc(disp)+'</a>'+
+        '<span class="vmeta">'+esc(s.label)+' · ▲ '+fmtNum(it.points)+'</span></li>';
+    }).join("");
+    box.innerHTML =
+      '<div class="res-head">Panorama de hoy</div>'+
+      '<div class="res-stats">'+state.items.length+' noticias · '+distinctSources(state.items)+' fuentes</div>'+
+      (chips?'<div class="res-sec"><div class="res-label">Temas del día</div><div class="themes">'+chips+'</div></div>':'')+
+      (votedHtml?'<div class="res-sec"><div class="res-label">Lo más votado</div><ol class="voted">'+votedHtml+'</ol></div>':'');
+    box.hidden=false;
+  }
+
   function render(){
+    renderSummary();
     var list=visible();
     var errs=Object.keys(state.errors);
     errEl.innerHTML = errs.length
@@ -800,6 +881,14 @@
       });
       render();
     });
+  });
+
+  $("#resumen").addEventListener("click", function(e){
+    var b=e.target.closest ? e.target.closest(".tchip") : null;
+    if(!b) return;
+    var term=b.getAttribute("data-term")||"";
+    state.q=term; $("#q").value=term; render();
+    try{ window.scrollTo({top:0, behavior:"smooth"}); }catch(_){ window.scrollTo(0,0); }
   });
 
   var tbtn=$("#translate");
