@@ -19,6 +19,7 @@
     --accent:#2143d6;
     --accent-ink:#2143d6;
     --hn:#ff6a00; --dev:#5865f2; --reddit:#ff4500;
+    --tc:#16a34a; --verge:#a23df5; --aa:#0ea5b7;
     --shadow:0 1px 2px rgba(20,22,28,.06), 0 8px 24px -16px rgba(20,22,28,.18);
     --sans:"IBM Plex Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -228,11 +229,14 @@
         <button class="chip" data-src="hn" aria-pressed="false"><span class="dot" style="background:var(--hn)"></span>Hacker News</button>
         <button class="chip" data-src="dev" aria-pressed="false"><span class="dot" style="background:var(--dev)"></span>Dev.to</button>
         <button class="chip" data-src="reddit" aria-pressed="false"><span class="dot" style="background:var(--reddit)"></span>Reddit</button>
+        <button class="chip" data-src="tc" aria-pressed="false"><span class="dot" style="background:var(--tc)"></span>TechCrunch</button>
+        <button class="chip" data-src="verge" aria-pressed="false"><span class="dot" style="background:var(--verge)"></span>The Verge</button>
+        <button class="chip" data-src="aa" aria-pressed="false"><span class="dot" style="background:var(--aa)"></span>Android Authority</button>
       </div>
       <span class="spacer"></span>
       <div class="sortsel" id="sort" role="group" aria-label="Ordenar">
-        <button data-sort="top" aria-pressed="true">Relevancia</button>
-        <button data-sort="new" aria-pressed="false">Recientes</button>
+        <button data-sort="new" aria-pressed="true">Recientes</button>
+        <button data-sort="top" aria-pressed="false">Más votadas</button>
       </div>
       <label class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -259,9 +263,13 @@
 <footer class="wrap">
   Radar Tech recopila automáticamente lo más destacado del día desde
   <a href="https://news.ycombinator.com" target="_blank" rel="noopener">Hacker News</a>,
-  <a href="https://dev.to" target="_blank" rel="noopener">Dev.to</a> y
-  <a href="https://www.reddit.com/r/technology/" target="_blank" rel="noopener">Reddit r/technology</a>.
+  <a href="https://dev.to" target="_blank" rel="noopener">Dev.to</a>,
+  <a href="https://www.reddit.com/r/technology/" target="_blank" rel="noopener">Reddit r/technology</a>,
+  <a href="https://techcrunch.com" target="_blank" rel="noopener">TechCrunch</a>,
+  <a href="https://www.theverge.com" target="_blank" rel="noopener">The Verge</a> y
+  <a href="https://www.androidauthority.com" target="_blank" rel="noopener">Android Authority</a>.
   Las noticias se cargan en vivo cada vez que abrís la página — guardá este archivo y abrilo cuando quieras para ver lo del día.
+  Los medios (RSS) se traen mediante un proxy público de código abierto; si alguno no responde, el resto sigue funcionando.
 </footer>
 
 <script>
@@ -269,9 +277,12 @@
   "use strict";
 
   var SRC = {
-    hn:     { label:"Hacker News", color:"var(--hn)" },
-    dev:    { label:"Dev.to",      color:"var(--dev)" },
-    reddit: { label:"Reddit",      color:"var(--reddit)" }
+    hn:     { label:"Hacker News",       color:"var(--hn)" },
+    dev:    { label:"Dev.to",            color:"var(--dev)" },
+    reddit: { label:"Reddit",            color:"var(--reddit)" },
+    tc:     { label:"TechCrunch",        color:"var(--tc)" },
+    verge:  { label:"The Verge",         color:"var(--verge)" },
+    aa:     { label:"Android Authority", color:"var(--aa)" }
   };
 
   var state = { items:[], filter:"all", sort:"top", q:"", errors:{} };
@@ -310,6 +321,63 @@
       if(!r.ok) throw new Error("HTTP "+r.status);
       return r.json();
     }), 12000);
+  }
+
+  // Los medios (RSS) no permiten lectura directa desde el navegador (CORS):
+  // se traen a través de un proxy público. Se prueban en orden si alguno falla.
+  var PROXIES = [
+    function(u){ return "https://api.allorigins.win/raw?url="+encodeURIComponent(u); },
+    function(u){ return "https://corsproxy.io/?url="+encodeURIComponent(u); },
+    function(u){ return "https://api.codetabs.com/v1/proxy/?quest="+encodeURIComponent(u); }
+  ];
+  function getText(url){
+    var i=0;
+    function attempt(){
+      return timeout(fetch(PROXIES[i](url)).then(function(r){
+        if(!r.ok) throw new Error("HTTP "+r.status);
+        return r.text();
+      }), 14000).catch(function(e){
+        i++; if(i<PROXIES.length) return attempt(); throw e;
+      });
+    }
+    return attempt();
+  }
+  function authorOf(n){
+    var dc=n.getElementsByTagName("dc:creator")[0];
+    if(dc && dc.textContent) return dc.textContent.trim();
+    var an=n.querySelector("author name");
+    if(an) return an.textContent.trim();
+    var a=n.querySelector("author");
+    if(a) return a.textContent.replace(/<[^>]+>/g,"").trim();
+    return "";
+  }
+  // Parser genérico RSS 2.0 / Atom
+  function fetchRSS(feedUrl, source, limit){
+    return getText(feedUrl).then(function(xml){
+      var doc=new DOMParser().parseFromString(xml, "text/xml");
+      if(doc.querySelector("parsererror")) throw new Error("feed ilegible");
+      var nodes=doc.querySelectorAll("item, entry");
+      var out=[];
+      Array.prototype.forEach.call(nodes, function(n){
+        var t=n.querySelector("title"); var title=t?t.textContent.trim():"";
+        var link="";
+        var alt=n.querySelector('link[rel="alternate"]');
+        if(alt && alt.getAttribute("href")) link=alt.getAttribute("href");
+        if(!link){
+          var le=n.querySelector("link");
+          if(le) link=le.getAttribute("href") || le.textContent.trim();
+        }
+        var ds=""; var de=n.querySelector("pubDate, published, updated, date");
+        if(de) ds=de.textContent.trim();
+        var ts=ds ? new Date(ds).getTime() : 0;
+        if(title && link){
+          out.push({ id:source+"|"+link, source:source, title:title, url:link,
+                     commentsUrl:link, points:null, comments:null,
+                     author:authorOf(n), ts:isNaN(ts)?0:ts });
+        }
+      });
+      return out.slice(0, limit||15);
+    });
   }
 
   /* ---------- fuentes ---------- */
@@ -367,7 +435,12 @@
     if(!state.items.length) renderSkeletons();
 
     var jobs=[
-      {k:"hn",fn:fetchHN},{k:"dev",fn:fetchDev},{k:"reddit",fn:fetchReddit}
+      {k:"hn",fn:fetchHN},
+      {k:"dev",fn:fetchDev},
+      {k:"reddit",fn:fetchReddit},
+      {k:"tc",fn:function(){ return fetchRSS("https://techcrunch.com/feed/","tc",15); }},
+      {k:"verge",fn:function(){ return fetchRSS("https://www.theverge.com/rss/index.xml","verge",15); }},
+      {k:"aa",fn:function(){ return fetchRSS("https://www.androidauthority.com/feed/","aa",15); }}
     ].map(function(j){
       return j.fn().then(function(items){ return {k:j.k, items:items}; })
                    .catch(function(e){ state.errors[j.k]=e.message||"error"; return {k:j.k, items:[]}; });
@@ -419,7 +492,7 @@
     });
     list.sort(state.sort==="new"
       ? function(a,b){ return b.ts-a.ts; }
-      : function(a,b){ return (b.points||0)-(a.points||0); });
+      : function(a,b){ return ((b.points||0)-(a.points||0)) || (b.ts-a.ts); });
     return list;
   }
 
@@ -445,8 +518,8 @@
     var html=list.map(function(it,i){
       var s=SRC[it.source], dom=domainOf(it.url);
       var meta=[];
-      meta.push('<span class="m" title="Puntos">'+icon("up")+fmtNum(it.points)+'</span>');
-      meta.push('<a class="m" href="'+esc(it.commentsUrl)+'" target="_blank" rel="noopener" title="Comentarios">'+icon("chat")+fmtNum(it.comments)+'</a>');
+      if(it.points!=null) meta.push('<span class="m" title="Puntos">'+icon("up")+fmtNum(it.points)+'</span>');
+      if(it.comments!=null) meta.push('<a class="m" href="'+esc(it.commentsUrl)+'" target="_blank" rel="noopener" title="Comentarios">'+icon("chat")+fmtNum(it.comments)+'</a>');
       if(it.ts) meta.push('<span class="m" title="Publicado">'+icon("clock")+ago(it.ts)+'</span>');
       if(it.author) meta.push('<span class="m">@'+esc(it.author)+'</span>');
       return '<li class="card">'+
@@ -497,7 +570,7 @@
 
   /* ---------- controles ---------- */
   state.filter = store("rt-filter") || "all";
-  state.sort   = store("rt-sort") || "top";
+  state.sort   = store("rt-sort") || "new";
 
   Array.prototype.forEach.call(document.querySelectorAll("#chips .chip"), function(b){
     b.setAttribute("aria-pressed", b.dataset.src===state.filter ? "true":"false");
