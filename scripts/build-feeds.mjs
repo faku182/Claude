@@ -147,62 +147,119 @@ const unique = items.filter((it) => {
 
 // ---- Traducción EN→ES, del lado del servidor ----
 // El botón "Traducir" de la página solo muestra estos textos: no depende de que el
-// navegador pueda hablar con un traductor (Google corta si le piden muchas a la vez).
-// Lo ya traducido se guarda en translations.json, así cada corrida traduce solo lo nuevo.
+// navegador pueda hablar con un traductor. Lo ya traducido se guarda en translations.json,
+// así cada corrida traduce solo lo nuevo. Se prueban varios traductores gratuitos en orden,
+// porque no todos aceptan consultas desde los servidores de GitHub.
 const EN_SOURCES = new Set(["hn", "dev", "reddit", "tc", "verge", "aa"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const keyOf = (t) => createHash("sha1").update(t).digest("hex").slice(0, 16);
+const limiteDe = (ms = 12000) => AbortSignal.timeout(ms);
 
 let cache = {};
 try { cache = JSON.parse(readFileSync("translations.json", "utf8")); } catch { cache = {}; }
 
-async function gtx(text) {
-  for (let a = 0; a < 3; a++) {
-    try {
-      const r = await fetch(
-        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=" + encodeURIComponent(text),
-        { headers: { "User-Agent": UA }, redirect: "manual" }
-      );
-      if (r.status === 200) {
-        const d = await r.json();
-        const out = (d[0] || []).map((s) => (s && s[0]) || "").join("").trim();
-        if (out) return out;
-      }
-    } catch { /* se reintenta */ }
-    if (a < 2) await sleep(1500 * (a + 1) ** 2);
+// 1) Traductor del navegador Edge: acepta lotes, una consulta traduce muchos textos.
+let edgeToken = null;
+async function edgeLote(textos, reintento = true) {
+  if (!edgeToken) {
+    const a = await fetch("https://edge.microsoft.com/translate/auth", { headers: { "User-Agent": UA }, signal: limiteDe() });
+    if (!a.ok) throw new Error("token HTTP " + a.status);
+    edgeToken = (await a.text()).trim();
   }
-  return null;
+  const r = await fetch("https://api-edge.cognitive.microsofttranslator.com/translate?from=en&to=es&api-version=3.0", {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + edgeToken, "Content-Type": "application/json", "User-Agent": UA },
+    body: JSON.stringify(textos.map((Text) => ({ Text }))),
+    signal: limiteDe(20000),
+  });
+  if (r.status === 401 && reintento) { edgeToken = null; return edgeLote(textos, false); }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const d = await r.json();
+  return d.map((x) => (x && x.translations && x.translations[0] && x.translations[0].text) || null);
 }
+
+// 2) Lingva (instancias públicas) y 3) Google: traducen de a un texto por consulta.
+const LINGVA = ["https://lingva.ml", "https://lingva.thedaviddelta.com", "https://translate.plausibility.cloud"];
+async function lingvaUno(t) {
+  for (const base of LINGVA) {
+    try {
+      const r = await fetch(base + "/api/v1/en/es/" + encodeURIComponent(t), { headers: { "User-Agent": UA }, signal: limiteDe() });
+      if (!r.ok) continue;
+      const d = await r.json();
+      if (d && d.translation) return String(d.translation).trim();
+    } catch { /* prueba la siguiente instancia */ }
+  }
+  throw new Error("ninguna instancia respondió");
+}
+async function googleUno(t) {
+  const r = await fetch(
+    "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=" + encodeURIComponent(t),
+    { headers: { "User-Agent": UA }, redirect: "manual", signal: limiteDe() }
+  );
+  if (r.status !== 200) throw new Error("HTTP " + r.status);
+  const d = await r.json();
+  return (d[0] || []).map((s) => (s && s[0]) || "").join("").trim() || null;
+}
+async function porUno(fn, textos) {
+  const out = new Array(textos.length).fill(null);
+  let i = 0, fallas = 0, ok = 0;
+  async function w() {
+    while (i < textos.length && !(fallas >= 3 && ok === 0)) {
+      const n = i++;
+      try { out[n] = await fn(textos[n]); ok++; } catch { fallas++; }
+      await sleep(150);
+    }
+  }
+  await Promise.all([w(), w(), w()]);
+  if (ok === 0) throw new Error("sin respuestas");
+  return out;
+}
+
+const PROVEEDORES = [
+  { nombre: "edge", run: edgeLote },
+  { nombre: "lingva", run: (ts) => porUno(lingvaUno, ts) },
+  { nombre: "google", run: (ts) => porUno(googleUno, ts) },
+];
 
 // Primero todos los títulos y después los resúmenes, por si se corta a mitad de camino.
-const queue = [];
-const queued = new Set();
-for (const field of ["title", "summary"]) {
+const pendientes = [];
+const encolados = new Set();
+for (const campo of ["title", "summary"]) {
   for (const it of unique) {
-    const t = it[field];
+    const t = it[campo];
     if (!EN_SOURCES.has(it.source) || !t) continue;
     const k = keyOf(t);
-    if (k in cache || queued.has(k)) continue;
-    queued.add(k);
-    queue.push([k, t]);
+    if (k in cache || encolados.has(k)) continue;
+    encolados.add(k);
+    pendientes.push([k, t]);
   }
 }
 
-let nuevas = 0, seguidas = 0, cortado = false;
+const porProveedor = {};
 const limite = Date.now() + 8 * 60 * 1000;
-async function worker() {
-  while (!cortado && queue.length && Date.now() < limite) {
-    const [k, t] = queue.shift();
-    const es = await gtx(t);
-    if (es) { cache[k] = es; nuevas++; seguidas = 0; }
-    else if (++seguidas >= 6) {
-      cortado = true;
-      console.error("El traductor no responde: se corta por ahora y se reintenta en la próxima corrida.");
+for (let i = 0; i < pendientes.length && Date.now() < limite; i += 25) {
+  const lote = pendientes.slice(i, i + 25);
+  for (const p of PROVEEDORES) {
+    if (p.muerto) continue;
+    try {
+      const salida = await p.run(lote.map(([, t]) => t));
+      let ok = 0;
+      salida.forEach((es, j) => { if (es) { cache[lote[j][0]] = es; ok++; } });
+      if (!ok) throw new Error("sin resultados");
+      porProveedor[p.nombre] = (porProveedor[p.nombre] || 0) + ok;
+      p.fallas = 0;
+      break;
+    } catch (e) {
+      p.fallas = (p.fallas || 0) + 1;
+      console.error(`Traductor "${p.nombre}" falló: ${e.message}`);
+      if (p.fallas >= 2) { p.muerto = true; console.error(`  → se descarta "${p.nombre}" en esta corrida`); }
     }
-    await sleep(150);
+  }
+  if (PROVEEDORES.every((p) => p.muerto)) {
+    console.error("Ningún traductor responde: se reintenta en la próxima corrida.");
+    break;
   }
 }
-await Promise.all([worker(), worker(), worker()]);
 
 const usadas = new Set();
 for (const it of unique) {
@@ -220,7 +277,8 @@ for (const it of unique) {
 const podada = {};
 for (const k of usadas) if (cache[k]) podada[k] = cache[k];
 writeFileSync("translations.json", JSON.stringify(podada));
-console.log("TRADUCCIONES", nuevas, "nuevas ·", Object.keys(podada).length, "guardadas ·", queue.length, "pendientes");
+const faltan = pendientes.filter(([k]) => !(k in cache)).length;
+console.log("TRADUCCIONES", JSON.stringify(porProveedor), "·", Object.keys(podada).length, "guardadas ·", faltan, "sin traducir");
 
 writeFileSync("data.json", JSON.stringify({ updated: new Date().toISOString(), errors, items: unique }));
 console.log("TOTAL", unique.length, "ítems ·", Object.keys(errors).length, "fuentes con error");
