@@ -223,6 +223,27 @@
   footer{border-top:1px solid var(--border); padding-block:20px 34px; color:var(--muted); font-family:var(--mono); font-size:.7rem; line-height:1.7}
   footer a{color:var(--accent-ink); text-decoration:none}
 
+  /* Celular: encabezado compacto, no fijo, y filtros en una sola fila deslizable. */
+  @media (max-width:640px){
+    header.top{position:static; backdrop-filter:none}
+    .top-inner{padding-block:12px; gap:10px}
+    .brand-row{flex-wrap:nowrap; gap:10px}
+    .brand-row > .spacer, .controls > .spacer{display:none}
+    .brand-text{flex:1 1 auto}
+    .tagline{font-size:.62rem; letter-spacing:.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+    #refresh{padding:8px; width:38px; justify-content:center}
+    #refresh span{display:none}
+    .controls{gap:8px}
+    .chips{
+      flex:1 1 100%; flex-wrap:nowrap; overflow-x:auto;
+      margin-inline:-16px; padding-inline:16px; padding-bottom:2px;
+      scrollbar-width:none; -webkit-overflow-scrolling:touch;
+    }
+    .chips::-webkit-scrollbar{display:none}
+    .chips .chip, .chips .chipsep{flex:none; white-space:nowrap}
+    .tl-long{display:none}
+    .search{flex:1 1 100%; min-width:0}
+  }
   @media (max-width:520px){
     h1{font-size:1.2rem}
     li.card{padding:14px; gap:4px 10px}
@@ -255,7 +276,7 @@
         <button class="btn icon" id="theme" title="Cambiar tema" aria-label="Cambiar tema">
           <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
         </button>
-        <button class="btn" id="refresh">
+        <button class="btn" id="refresh" title="Actualizar" aria-label="Actualizar">
           <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
           <span>Actualizar</span>
         </button>
@@ -288,7 +309,7 @@
       </div>
       <button class="chip tgl" id="translate" aria-pressed="false" title="Traducir al español los títulos en inglés">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"/></svg>
-        Traducir al español
+        Traducir<span class="tl-long"> al español</span>
       </button>
       <label class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -700,11 +721,17 @@
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
   }
 
+  // Minúsculas y sin acentos, para comparar "tecnología" con "tecnologia".
+  function fold(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,""); }
+
   function visible(){
-    var q=state.q.trim().toLowerCase();
+    var q=fold(state.q.trim());
     var list=state.items.filter(function(it){
       if(state.filter!=="all" && it.source!==state.filter) return false;
-      if(q && it.title.toLowerCase().indexOf(q)===-1 && domainOf(it.url).indexOf(q)===-1) return false;
+      if(q){
+        var hay=fold(it.title+" "+(it.summary||"")+" "+(it.titleEs||""));
+        if(hay.indexOf(q)===-1 && domainOf(it.url).indexOf(q)===-1) return false;
+      }
       return true;
     });
     list.sort(state.sort==="new"
@@ -714,29 +741,47 @@
   }
 
   // Palabras muy frecuentes que no aportan como "tema".
+  // Se guardan sin acentos (se comparan con fold()). Solo palabras de 4+ letras, que es lo que se analiza.
   var STOP = {};
-  ("de la el los las un una unos unas y o u que con por para del al en es son se su sus lo le les como mas más pero este esta estos estas ese esa eso aqui aquí ahora hoy dia día año años sobre entre desde hasta tras cada todo toda todos todas otro otra via vía nuevo nueva nuevos nuevas puede pueden hacer hace tiene tienen ser estar sin ante bajo cabe hacia segun según sea han hay fue era muy ya no si sí "+
-   "the and for with that this from have has are was will you your they their its new now how what why who out get can not but all any one two has had why "+
-   "best top first last next after before into over under about your more most than then them there here when where which while your yours")
+  ("para como pero este esta estos estas esto ese esa eso esos esas aquel aquella aqui alli ahora hoy ayer manana dias ano anos mes meses semana semanas "+
+   "sobre entre desde hasta tras cada todo toda todos todas otro otra otros otras nuevo nueva nuevos nuevas puede pueden podria podrian hacer hace hacen hizo "+
+   "tiene tienen tener tenia sera seran sido siendo estar estan estaba estado ante bajo hacia segun sean habia habra fueron eran tambien despues antes durante "+
+   "tiempo veces cuando donde cual cuales quien quienes porque aunque mientras contra sino pues solo tanto tanta tantos mucho mucha muchos muchas poco poca pocos pocas "+
+   "algo nada alguien nadie cosa cosas parte partes forma formas manera modo gran grande grandes mejor mejores peor primer primera primero segundo ultimo ultima ultimos ultimas "+
+   "mismo misma mismos mismas nuestro nuestra nuestros nuestras ellos ellas usted ustedes vamos hecho dice dicen dijo ademas incluso luego entonces siempre nunca asi "+
+   "this that with from have will been were they their what when which would could should about into more than then also just like over only some such even most make made many much "+
+   "very your here there these those after before while where being other another first last still every both each does doing done using used uses says said year years time today "+
+   "week weeks days best next back well need want take takes took look looks come comes goes going gets getting give gives know people thing things really right good great high long full free "+
+   "enero febrero marzo abril mayo junio julio agosto septiembre setiembre octubre noviembre diciembre "+
+   "january february march april june july august september october november december "+
+   "lunes martes miercoles jueves viernes sabado domingo monday tuesday wednesday thursday friday saturday sunday "+
+   "cuanto cuanta cuantos cuantas empresa empresas company companies real "+
+   "news new top")
     .split(/\s+/).forEach(function(w){ if(w) STOP[w]=1; });
 
   function distinctSources(items){ var s={}; items.forEach(function(x){ s[x.source]=1; }); return Object.keys(s).length; }
 
+  // Temas del día: palabras en 3+ noticias de 2+ fuentes distintas (ignora acentos).
   function topThemes(items){
-    var freq={};
+    var freq={}, srcs={}, shown={};
     items.forEach(function(it){
       var text=(it.title+" "+(it.summary||"")).toLowerCase();
       var words=text.match(/[a-záéíóúñü]{4,}/g)||[];
       var seen={};
       words.forEach(function(w){
-        if(STOP[w] || seen[w]) return;
-        seen[w]=1; freq[w]=(freq[w]||0)+1;
+        var k=fold(w);
+        if(STOP[k] || seen[k]) return;
+        seen[k]=1;
+        freq[k]=(freq[k]||0)+1;
+        (srcs[k]=srcs[k]||{})[it.source]=1;
+        if(!shown[k]) shown[k]=w;
       });
     });
-    return Object.keys(freq).map(function(w){ return [w, freq[w]]; })
-      .filter(function(p){ return p[1]>=3; })
-      .sort(function(a,b){ return b[1]-a[1]; })
-      .slice(0,10);
+    return Object.keys(freq)
+      .filter(function(k){ return freq[k]>=3 && Object.keys(srcs[k]).length>=2; })
+      .sort(function(a,b){ return freq[b]-freq[a]; })
+      .slice(0,10)
+      .map(function(k){ return [shown[k], freq[k]]; });
   }
 
   function renderSummary(){

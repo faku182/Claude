@@ -2,7 +2,10 @@ name: Actualizar noticias
 
 on:
   schedule:
-    - cron: "17 * * * *"   # cada 1 hora
+    # GitHub puede saltear corridas programadas cuando hay mucha carga.
+    # Dos horarios por hora aumentan las chances de que haya una actualización cada hora.
+    - cron: "17 * * * *"
+    - cron: "47 * * * *"
   workflow_dispatch: {}        # permite correrlo a mano
   push:
     branches: [claude/daily-tech-news-html-dgcwpk]
