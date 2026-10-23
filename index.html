@@ -464,61 +464,88 @@
     });
   }
   /* ---------- traducción EN→ES ---------- */
-  // Caché persistente de títulos traducidos (clave: título original).
+  // Caché persistente en el navegador (clave: texto original). Lo ya traducido no se vuelve a pedir.
   var TC = (function(){ try{ return JSON.parse(localStorage.getItem("mt-tcache")||"{}"); }catch(e){ return {}; } })();
   function cacheGet(k){ return TC["t:"+k]; }
-  function cacheSet(k,v){
-    TC["t:"+k]=v;
+  function cacheSet(k,v){ TC["t:"+k]=v; }
+  function cacheFlush(){
     try{
       var ks=Object.keys(TC);
-      if(ks.length>1200){ for(var j=0;j<ks.length-900;j++) delete TC[ks[j]]; }
+      if(ks.length>1500){ for(var j=0;j<ks.length-1100;j++) delete TC[ks[j]]; }
       localStorage.setItem("mt-tcache", JSON.stringify(TC));
     }catch(e){}
   }
   function gtxUrl(t){
     return "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q="+encodeURIComponent(t);
   }
-  function parseGtx(data){
-    if(!data || !data[0]) return null;
-    return data[0].map(function(s){ return (s && s[0]) ? s[0] : ""; }).join("");
+  // Traduce varios textos en UNA consulta: se unen con saltos de línea y el resultado se separa
+  // por los segmentos que terminan en salto de línea. Pedir de a uno hace que Google corte.
+  function translateBatch(texts){
+    var clean=texts.map(function(t){ return String(t).replace(/\s+/g," ").trim(); });
+    return timeout(fetch(gtxUrl(clean.join("\n"))).then(function(r){
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      return r.json();
+    }), 15000).then(function(data){
+      var out=[], acc="";
+      ((data && data[0]) || []).forEach(function(s){
+        acc+=(s && s[0]) || "";
+        if((((s && s[1]) || "").slice(-1))==="\n"){ out.push(acc.trim()); acc=""; }
+      });
+      if(acc.trim()) out.push(acc.trim());
+      if(out.length!==texts.length){ var e=new Error("lote desalineado"); e.desalineado=true; throw e; }
+      return out;
+    });
   }
-  // Traduce un texto. Prueba directo y, si CORS lo bloquea, vía proxy.
-  function translateText(t){
-    var url=gtxUrl(t);
-    return timeout(fetch(url).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }), 12000)
-      .catch(function(){ return getText(url).then(function(txt){ return JSON.parse(txt); }); })
-      .then(function(data){ return parseGtx(data) || t; });
+  // Si un lote vuelve desalineado se parte a la mitad, hasta llegar a textos sueltos.
+  // Los errores de red no se parten: se cortan enseguida.
+  function translateMany(texts){
+    return translateBatch(texts).catch(function(e){
+      if(!e.desalineado || texts.length===1) throw e;
+      var mid=Math.ceil(texts.length/2);
+      return translateMany(texts.slice(0,mid)).then(function(a){
+        return translateMany(texts.slice(mid)).then(function(b){ return a.concat(b); });
+      });
+    });
   }
-  // Traduce título y resumen de un ítem (lo que falte).
-  function translateItem(it){
-    var jobs=[];
-    if(!it.titleEs){
-      jobs.push(translateText(it.title).then(function(x){ it.titleEs=x||it.title; cacheSet(it.title, it.titleEs); })
-                 .catch(function(){ it.titleEs=it.title; it._tfail=true; }));
-    }
-    if(it.summary && !it.summaryEs){
-      jobs.push(translateText(it.summary).then(function(x){ it.summaryEs=x||it.summary; cacheSet(it.summary, it.summaryEs); })
-                 .catch(function(){ it.summaryEs=it.summary; it._tfail=true; }));
-    }
-    return Promise.all(jobs);
+  function paint(it, token){
+    if(token!==renderToken || !state.translate) return;
+    if(it._el && it.titleEs){ it._el.textContent=it.titleEs; it._el.setAttribute("title", it.title); }
+    if(it._sel && it.summaryEs){ it._sel.textContent=it.summaryEs; }
   }
-  // Traduce un lote con concurrencia limitada; actualiza la tarjeta en vivo.
+  // Traduce lo que falta: títulos de a 20 y resúmenes de a 8 por consulta, de a 2 consultas a la vez.
+  // Si dos consultas seguidas fallan, se corta y lo que falta queda marcado como "sin traducir".
   function translatePool(items, token){
-    var i=0, active=0, max=4;
+    var jobs=[];
+    function addJobs(field, size){
+      var list=items.filter(function(it){ return field==="title" ? !it.titleEs : (it.summary && !it.summaryEs); });
+      for(var i=0;i<list.length;i+=size) jobs.push({field:field, items:list.slice(i,i+size)});
+    }
+    addJobs("title",20); addJobs("summary",8);
+    var idx=0, active=0, max=2, fails=0;
     return new Promise(function(resolve){
+      function done(){ cacheFlush(); resolve(); }
       function next(){
-        if(token!==renderToken){ resolve(); return; }
-        if(i>=items.length && active===0){ resolve(); return; }
-        while(active<max && i<items.length){
-          (function(it){
+        if(token!==renderToken){ cacheFlush(); resolve(); return; }
+        if(fails>=2){
+          while(idx<jobs.length){ jobs[idx++].items.forEach(function(it){ it._tfail=true; }); }
+        }
+        if(idx>=jobs.length && active===0){ done(); return; }
+        while(active<max && idx<jobs.length && fails<2){
+          (function(job){
             active++;
-            translateItem(it).then(function(){
-              if(token===renderToken && state.translate){
-                if(it._el && it.titleEs){ it._el.textContent=it.titleEs; it._el.setAttribute("title", it.title); }
-                if(it._sel && it.summaryEs){ it._sel.textContent=it.summaryEs; }
-              }
-            }).then(function(){ active--; next(); });
-          })(items[i++]);
+            var texts=job.items.map(function(it){ return job.field==="title" ? it.title : it.summary; });
+            translateMany(texts).then(function(res){
+              fails=0;
+              job.items.forEach(function(it,i){
+                if(job.field==="title"){ it.titleEs=res[i]||it.title; cacheSet(it.title, it.titleEs); }
+                else { it.summaryEs=res[i]||it.summary; cacheSet(it.summary, it.summaryEs); }
+                paint(it, token);
+              });
+            }).catch(function(){
+              fails++;
+              job.items.forEach(function(it){ it._tfail=true; });
+            }).then(function(){ active--; setTimeout(next,200); });
+          })(jobs[idx++]);
         }
       }
       next();
@@ -876,7 +903,7 @@
 
     if(state.translate){
       var pend=list.filter(function(it){
-        return !ES[it.source] && (!it.titleEs || (it.summary && !it.summaryEs));
+        return !ES[it.source] && !it._tfail && (!it.titleEs || (it.summary && !it.summaryEs));
       });
       if(pend.length){
         $("#count").textContent=countText(list)+" · traduciendo…";
@@ -961,6 +988,8 @@
   tbtn.setAttribute("aria-pressed", state.translate ? "true":"false");
   tbtn.addEventListener("click", function(){
     state.translate=!state.translate;
+    // Al volver a prender se reintenta lo que había fallado.
+    if(state.translate) state.items.forEach(function(it){ delete it._tfail; });
     store("mt-translate", state.translate?"1":"");
     tbtn.setAttribute("aria-pressed", state.translate?"true":"false");
     render();
