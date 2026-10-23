@@ -1,6 +1,8 @@
-// Junta las noticias de las 9 fuentes y escribe data.json.
+// Junta las noticias de todas las fuentes, traduce al español las que vienen en inglés
+// y escribe data.json (+ translations.json, la caché de traducciones).
 // Corre en GitHub Actions (Node 20), del lado del servidor: sin límites de CORS.
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 const UA = "Mozilla/5.0 (compatible; MicrodosisTechBot/1.0; +https://faku182.github.io/Claude/)";
 
@@ -142,6 +144,83 @@ const unique = items.filter((it) => {
   seen.add(key);
   return true;
 });
+
+// ---- Traducción EN→ES, del lado del servidor ----
+// El botón "Traducir" de la página solo muestra estos textos: no depende de que el
+// navegador pueda hablar con un traductor (Google corta si le piden muchas a la vez).
+// Lo ya traducido se guarda en translations.json, así cada corrida traduce solo lo nuevo.
+const EN_SOURCES = new Set(["hn", "dev", "reddit", "tc", "verge", "aa"]);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const keyOf = (t) => createHash("sha1").update(t).digest("hex").slice(0, 16);
+
+let cache = {};
+try { cache = JSON.parse(readFileSync("translations.json", "utf8")); } catch { cache = {}; }
+
+async function gtx(text) {
+  for (let a = 0; a < 3; a++) {
+    try {
+      const r = await fetch(
+        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=es&dt=t&q=" + encodeURIComponent(text),
+        { headers: { "User-Agent": UA }, redirect: "manual" }
+      );
+      if (r.status === 200) {
+        const d = await r.json();
+        const out = (d[0] || []).map((s) => (s && s[0]) || "").join("").trim();
+        if (out) return out;
+      }
+    } catch { /* se reintenta */ }
+    if (a < 2) await sleep(1500 * (a + 1) ** 2);
+  }
+  return null;
+}
+
+// Primero todos los títulos y después los resúmenes, por si se corta a mitad de camino.
+const queue = [];
+const queued = new Set();
+for (const field of ["title", "summary"]) {
+  for (const it of unique) {
+    const t = it[field];
+    if (!EN_SOURCES.has(it.source) || !t) continue;
+    const k = keyOf(t);
+    if (k in cache || queued.has(k)) continue;
+    queued.add(k);
+    queue.push([k, t]);
+  }
+}
+
+let nuevas = 0, seguidas = 0, cortado = false;
+const limite = Date.now() + 8 * 60 * 1000;
+async function worker() {
+  while (!cortado && queue.length && Date.now() < limite) {
+    const [k, t] = queue.shift();
+    const es = await gtx(t);
+    if (es) { cache[k] = es; nuevas++; seguidas = 0; }
+    else if (++seguidas >= 6) {
+      cortado = true;
+      console.error("El traductor no responde: se corta por ahora y se reintenta en la próxima corrida.");
+    }
+    await sleep(150);
+  }
+}
+await Promise.all([worker(), worker(), worker()]);
+
+const usadas = new Set();
+for (const it of unique) {
+  if (!EN_SOURCES.has(it.source)) continue;
+  const kt = keyOf(it.title);
+  usadas.add(kt);
+  if (cache[kt]) it.titleEs = cache[kt];
+  if (it.summary) {
+    const ks = keyOf(it.summary);
+    usadas.add(ks);
+    if (cache[ks]) it.summaryEs = cache[ks];
+  }
+}
+// Se guardan solo las traducciones de las noticias actuales, para que el archivo no crezca.
+const podada = {};
+for (const k of usadas) if (cache[k]) podada[k] = cache[k];
+writeFileSync("translations.json", JSON.stringify(podada));
+console.log("TRADUCCIONES", nuevas, "nuevas ·", Object.keys(podada).length, "guardadas ·", queue.length, "pendientes");
 
 writeFileSync("data.json", JSON.stringify({ updated: new Date().toISOString(), errors, items: unique }));
 console.log("TOTAL", unique.length, "ítems ·", Object.keys(errors).length, "fuentes con error");

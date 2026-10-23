@@ -494,11 +494,11 @@
     var jobs=[];
     if(!it.titleEs){
       jobs.push(translateText(it.title).then(function(x){ it.titleEs=x||it.title; cacheSet(it.title, it.titleEs); })
-                 .catch(function(){ it.titleEs=it.title; }));
+                 .catch(function(){ it.titleEs=it.title; it._tfail=true; }));
     }
     if(it.summary && !it.summaryEs){
       jobs.push(translateText(it.summary).then(function(x){ it.summaryEs=x||it.summary; cacheSet(it.summary, it.summaryEs); })
-                 .catch(function(){ it.summaryEs=it.summary; }));
+                 .catch(function(){ it.summaryEs=it.summary; it._tfail=true; }));
     }
     return Promise.all(jobs);
   }
@@ -891,7 +891,8 @@
 
   function countText(list){
     var sc={}; state.items.forEach(function(x){ sc[x.source]=1; });
-    return list.length+" noticias · "+Object.keys(sc).length+" fuentes";
+    var failed=state.translate ? state.items.filter(function(x){ return x._tfail; }).length : 0;
+    return list.length+" noticias · "+Object.keys(sc).length+" fuentes"+(failed ? " · "+failed+" sin traducir" : "");
   }
 
   /* ---------- fecha cabecera ---------- */
